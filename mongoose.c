@@ -3109,6 +3109,17 @@ void mg_mqtt_sub(struct mg_connection *c, struct mg_str topic, int qos) {
   mg_send(c, &qos_, sizeof(qos_));
 }
 
+void mg_mqtt_unsub(struct mg_connection *c, struct mg_str topic) {
+    uint8_t zero = 0;
+    uint32_t len = 2 + (uint32_t)topic.len + 2 + (c->is_mqtt5 ? 1 : 0);
+    mg_mqtt_send_header(c, MQTT_CMD_UNSUBSCRIBE, 2, len);
+    if (++c->mgr->mqtt_id == 0) ++c->mgr->mqtt_id;
+    mg_send_u16(c, mg_htons(c->mgr->mqtt_id));
+    if (c->is_mqtt5) mg_send(c, &zero, sizeof(zero));
+    mg_send_u16(c, mg_htons((uint16_t)topic.len));
+    mg_send(c, topic.ptr, topic.len);
+}
+
 int mg_mqtt_parse(const uint8_t *buf, size_t len, uint8_t version,
                   struct mg_mqtt_message *m) {
   uint8_t lc = 0, *p, *end;
