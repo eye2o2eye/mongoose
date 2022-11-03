@@ -5906,21 +5906,36 @@ static void mg_ws_cb(struct mg_connection *c, int ev, void *ev_data,
 
 struct mg_connection *mg_ws_connect(struct mg_mgr *mgr, const char *url,
                                     mg_event_handler_t fn, void *fn_data,
-                                    const char *fmt, ...) {
+                                    const char *fmt,const char *sec_protocol, ...) {
   struct mg_connection *c = mg_connect(mgr, url, fn, fn_data);
   if (c != NULL) {
     char nonce[16], key[30];
     struct mg_str host = mg_url_host(url);
     mg_random(nonce, sizeof(nonce));
     mg_base64_encode((unsigned char *) nonce, sizeof(nonce), key);
-    mg_xprintf(mg_pfn_iobuf, &c->send,
-               "GET %s HTTP/1.1\r\n"
-               "Upgrade: websocket\r\n"
-               "Host: %.*s\r\n"
-               "Connection: Upgrade\r\n"
-               "Sec-WebSocket-Version: 13\r\n"
-               "Sec-WebSocket-Key: %s\r\n",
-               mg_url_uri(url), (int) host.len, host.ptr, key);
+    if (sec_protocol != NULL)
+    {
+        mg_xprintf(mg_pfn_iobuf, &c->send,
+            "GET %s HTTP/1.1\r\n"
+            "Upgrade: websocket\r\n"
+            "Host: %.*s\r\n"
+            "Connection: Upgrade\r\n"
+            "Sec-WebSocket-Version: 13\r\n"
+            "Sec-WebSocket-Key: %s\r\n"
+            "Sec-WebSocket-Protocol: %s\r\n",
+            mg_url_uri(url), (int)host.len, host.ptr, key, sec_protocol);
+    }
+    else
+    {
+        mg_xprintf(mg_pfn_iobuf, &c->send,
+            "GET %s HTTP/1.1\r\n"
+            "Upgrade: websocket\r\n"
+            "Host: %.*s\r\n"
+            "Connection: Upgrade\r\n"
+            "Sec-WebSocket-Version: 13\r\n"
+            "Sec-WebSocket-Key: %s\r\n",
+            mg_url_uri(url), (int)host.len, host.ptr, key);
+    }
     if (fmt != NULL) {
       va_list ap;
       va_start(ap, fmt);

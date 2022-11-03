@@ -1256,7 +1256,7 @@ struct mg_ws_message {
 
 struct mg_connection *mg_ws_connect(struct mg_mgr *, const char *url,
                                     mg_event_handler_t fn, void *fn_data,
-                                    const char *fmt, ...);
+                                    const char *fmt, const char* sec_protocol, ...);
 void mg_ws_upgrade(struct mg_connection *, struct mg_http_message *,
                    const char *fmt, ...);
 size_t mg_ws_send(struct mg_connection *, const void *buf, size_t len, int op);
