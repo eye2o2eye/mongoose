@@ -1349,6 +1349,7 @@ struct mg_fs mg_fs_posix = {p_stat,  p_list, p_open,   p_close,  p_read,
 
 
 
+
 // Chunk deletion marker is the MSB in the "processed" counter
 #define MG_DMARK ((size_t) 1 << (sizeof(size_t) * 8 - 1))
 
@@ -1694,7 +1695,9 @@ static void static_cb(struct mg_connection *c, int ev, void *ev_data,
   if (ev == MG_EV_WRITE || ev == MG_EV_POLL) {
     struct mg_fd *fd = (struct mg_fd *) fn_data;
     // Read to send IO buffer directly, avoid extra on-stack buffer
-    size_t n, max = MG_IO_SIZE, space, *cl = (size_t *) c->label;
+    size_t n, max = MG_IO_SIZE, space;
+    size_t *cl = (size_t *) &c->label[(sizeof(c->label) - sizeof(size_t)) /
+                                      sizeof(size_t) * sizeof(size_t)];
     if (c->send.size < max) mg_iobuf_resize(&c->send, max);
     if (c->send.len >= c->send.size) return;  // Rate limit
     if ((space = c->send.size - c->send.len) > *cl) space = *cl;
@@ -1865,9 +1868,12 @@ void mg_http_serve_file(struct mg_connection *c, struct mg_http_message *hm,
       c->is_resp = 0;
       mg_fs_close(fd);
     } else {
+      // Track to-be-sent content length at the end of c->label, aligned
+      size_t *clp = (size_t *) &c->label[(sizeof(c->label) - sizeof(size_t)) /
+                                         sizeof(size_t) * sizeof(size_t)];
       c->pfn = static_cb;
       c->pfn_data = fd;
-      *(size_t *) c->label = (size_t) cl;  // Track to-be-sent content length
+      *clp = (size_t) cl;
     }
   }
 }
@@ -2237,7 +2243,7 @@ static void deliver_chunked_chunks(struct mg_connection *c, size_t hlen,
     ofs += pl + dl + 2, del += pl + 2;  // 2 is for \r\n suffix
     processed += dl;
     if (c->recv.len != saved) processed -= dl, buf -= dl;
-    //mg_hexdump(c->recv.buf, hlen + processed);
+    // mg_hexdump(c->recv.buf, hlen + processed);
     last = (dl == 0);
   }
   mg_iobuf_del(&c->recv, hlen + processed, del);
@@ -2308,6 +2314,34 @@ static void http_cb(struct mg_connection *c, int ev, void *evd, void *fnd) {
     }
   }
   (void) evd, (void) fnd;
+}
+
+static void mg_hfn(struct mg_connection *c, int ev, void *ev_data, void *fnd) {
+  if (ev == MG_EV_HTTP_MSG) {
+    struct mg_http_message *hm = (struct mg_http_message *) ev_data;
+    if (mg_http_match_uri(hm, "/quit")) {
+      mg_http_reply(c, 200, "", "ok\n");
+      c->is_draining = 1;
+      c->label[0] = 'X';
+    } else if (mg_http_match_uri(hm, "/debug")) {
+      int level = (int) mg_json_get_long(hm->body, "$.level", MG_LL_DEBUG);
+      mg_log_set(level);
+      mg_http_reply(c, 200, "", "Debug level set to %d\n", level);
+    } else {
+      mg_http_reply(c, 200, "", "hi\n");
+    }
+  } else if (ev == MG_EV_CLOSE) {
+    if (c->label[0] == 'X') *(bool *) fnd = true;
+  }
+}
+
+void mg_hello(const char *url) {
+  struct mg_mgr mgr;
+  bool done = false;
+  mg_mgr_init(&mgr);
+  if (mg_http_listen(&mgr, url, mg_hfn, &done) == NULL) done = true;
+  while (done == false) mg_mgr_poll(&mgr, 100);
+  mg_mgr_free(&mgr);
 }
 
 struct mg_connection *mg_http_connect(struct mg_mgr *mgr, const char *url,
@@ -4139,14 +4173,12 @@ static void mg_set_non_blocking_mode(SOCKET fd) {
   fcntl(fd, F_SETFL, O_NONBLOCK);
 #elif MG_ARCH == MG_ARCH_TIRTOS
   int val = 0;
-  setsockopt(fd, 0, SO_BLOCKING, &val, sizeof(val));
-  int status = 0;
-  int res = SockStatus(fd, FDSTATUS_SEND, &status);
-  if (res == 0 && status > 0) {
-    val = status / 2;
-    int val_size = sizeof(val);
-    res = SockSet(fd, SOL_SOCKET, SO_SNDLOWAT, &val, val_size);
-  }
+  setsockopt(fd, SOL_SOCKET, SO_BLOCKING, &val, sizeof(val));
+  // SPRU524J section 3.3.3 page 63, SO_SNDLOWAT
+  int sz = sizeof(val);
+  getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &val, &sz);
+  val /= 2;  // set send low-water mark at half send buffer size
+  setsockopt(fd, SOL_SOCKET, SO_SNDLOWAT, &val, sizeof(val));
 #else
   fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);  // Non-blocking mode
   fcntl(fd, F_SETFD, FD_CLOEXEC);                          // Set close-on-exec
@@ -4310,6 +4342,11 @@ void mg_connect_resolved(struct mg_connection *c) {
     mg_error(c, "socket(): %d", MG_SOCK_ERRNO);
   } else if (c->is_udp) {
     MG_EPOLL_ADD(c);
+#if MG_ARCH == MG_ARCH_TIRTOS
+    union usa usa;  // TI-RTOS NDK requires binding to receive on UDP sockets
+    socklen_t slen = tousa(&c->loc, &usa);
+    if (bind(c->fd, &usa.sa, slen) != 0) MG_ERROR(("bind: %d", MG_SOCK_ERRNO));
+#endif
     mg_call(c, MG_EV_RESOLVE, NULL);
     mg_call(c, MG_EV_CONNECT, NULL);
   } else {
@@ -4329,6 +4366,7 @@ void mg_connect_resolved(struct mg_connection *c) {
       mg_error(c, "connect: %d", MG_SOCK_ERRNO);
     }
   }
+  (void) rc;
 }
 
 static SOCKET raccept(SOCKET sock, union usa *usa, socklen_t len) {
@@ -6106,7 +6144,7 @@ static bool mip_driver_stm32_init(uint8_t *mac, void *userdata) {
 
   // Set MDC clock divider. If user told us the value, use it. Otherwise, guess
   int cr = (d == NULL || d->mdc_cr < 0) ? guess_mdc_cr() : d->mdc_cr;
-  ETH->MACMIIAR = ((uint32_t)cr & 3) << 2;
+  ETH->MACMIIAR = ((uint32_t)cr & 7) << 2;
 
   // NOTE(cpq): we do not use extended descriptor bit 7, and do not use
   // hardware checksum. Therefore, descriptor size is 4, not 8

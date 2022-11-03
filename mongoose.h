@@ -61,7 +61,7 @@ extern "C" {
 #define MG_ARCH MG_ARCH_RP2040
 #endif
 
-#if !defined(MG_ARCH)
+#if !defined(MG_ARCH) || (MG_ARCH == MG_ARCH_CUSTOM)
 #include "mongoose_custom.h"  // keep this include
 #endif
 
@@ -420,15 +420,11 @@ struct timeval {
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include <time.h>
-#include <errno.h>
 
+#include <serrno.h>
 #include <sys/socket.h>
 
 #include <ti/sysbios/knl/Clock.h>
-
-extern int SockStatus(SOCKET hSock, int request, int *results );
-extern int SockSet(SOCKET hSock, int Type, int Prop, void *pbuf, int size);
 
 #endif
 
@@ -1182,6 +1178,7 @@ void mg_http_bauth(struct mg_connection *, const char *user, const char *pass);
 struct mg_str mg_http_get_header_var(struct mg_str s, struct mg_str v);
 size_t mg_http_next_multipart(struct mg_str, size_t, struct mg_http_part *);
 int mg_http_status(const struct mg_http_message *hm);
+void mg_hello(const char *url);
 
 
 void mg_http_serve_ssi(struct mg_connection *c, const char *root,
