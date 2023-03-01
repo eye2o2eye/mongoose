@@ -4103,11 +4103,11 @@ static void iolog(struct mg_connection *c, char *buf, long n, bool r) {
       memset(&a, 0, sizeof(a));
       if (getsockname(FD(c), &usa.sa, &slen) < 0) (void) 0;  // Ignore result
       tomgaddr(&usa, &a, c->rem.is_ip6);
-      MG_INFO(("\n-- %lu %s %s %s %s %ld", c->id,
+	  MG_DEBUG(("\n-- %lu %s %s %s %s %ld", c->id,
                mg_straddr(&a, t1, sizeof(t1)), r ? "<-" : "->",
                mg_straddr(&c->rem, t2, sizeof(t2)), c->label, n));
 
-      mg_hexdump(buf, (size_t) n);
+      //mg_hexdump(buf, (size_t) n);
     }
     if (r) {
       c->recv.len += (size_t) n;
