@@ -4107,7 +4107,7 @@ static void iolog(struct mg_connection *c, char *buf, long n, bool r) {
                mg_straddr(&a, t1, sizeof(t1)), r ? "<-" : "->",
                mg_straddr(&c->rem, t2, sizeof(t2)), c->label, n));
 
-      //mg_hexdump(buf, (size_t) n);
+      mg_hexdump(buf, (size_t) n);
     }
     if (r) {
       c->recv.len += (size_t) n;
